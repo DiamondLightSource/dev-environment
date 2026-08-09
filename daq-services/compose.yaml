@@ -1,0 +1,124 @@
+services:
+  numtracker:
+    image: ghcr.io/diamondlightsource/numtracker:1.0.2
+    network_mode: host # Port 8406
+    environment:
+      - NUMTRACKER_AUTH_HOST=http://localhost:8181/
+      - NUMTRACKER_AUTH_ACCESS=v1/data/diamond/policy/numtracker/write_to_beamline_visit
+      - NUMTRACKER_AUTH_ADMIN=v1/data/diamond/policy/admin/configure_beamline
+    command: ["serve","-v", "--port", "8406"]
+    security_opt:
+      - label=disable
+    profiles:
+      - test
+
+  rabbitmq:
+    image: docker.io/rabbitmq:4.0-management
+    ports:
+      - "1883:1883" # mqtt
+      - "5672:5672" # amqp
+      - "15672:15672" # dashboard
+      - "61613:61613" # stomp
+    volumes:
+      - type: bind
+        source: ./services/rabbitmq_plugins
+        target: /etc/rabbitmq/enabled_plugins
+    security_opt:
+      - label=disable
+    profiles:
+      - test
+
+  keycloak:
+    image: keycloak/keycloak:26.4
+    environment:
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
+      - KC_BOOTSTRAP_ADMIN_USERNAME=admin
+      - KC_HOSTNAME=http://localhost:8081
+    command: ["start-dev"]
+    volumes:
+      - ./services/keycloak_config/:/tmp/config/
+    post_start:
+      - command: bash /tmp/config/startup.sh
+    ports:
+      - 8081:8080
+    healthcheck:
+      test: /opt/keycloak/bin/kcadm.sh config credentials --server http://keycloak:8080 --realm master --user admin --password admin
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    security_opt:
+      - label=disable
+    profiles:
+      - test
+
+  tiled:
+    image: ghcr.io/zohebshaikh/diamond-tiled:0.0.1
+    network_mode: host # Port 8407
+    environment:
+      - PYTHONPATH=/deploy/
+      - POSTGRES_PASSWORD=tiled_pg
+    volumes:
+      - ./services/tiled_config/config.yml:/deploy/config/config_for_containerfile.yml
+    command: ["tiled", "serve", "config", "--host", "0.0.0.0", "--port", "8407"]
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      tiled-postgres:
+        condition: service_healthy
+    security_opt:
+      - label=disable
+    profiles:
+      - test
+
+  tiled-postgres:
+    image: docker.io/postgres:16
+    network_mode: host
+    environment:
+      - POSTGRES_USER=tiled
+      - POSTGRES_PASSWORD=tiled_pg
+      # We create two databases, 'tiled_catalog' (metadata) and
+      # 'tiled_storage' (tabular data) below. But it is required to
+      # specify one here, so we use 'postgres' as a neutral default.
+      - POSTGRES_DB=postgres
+    volumes:
+      - ./services/tiled_config/initdb:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: pg_isready -U tiled -d postgres
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    profiles:
+      - test
+
+  opa:
+    image: openpolicyagent/opa:edge-static-debug
+    network_mode: host # Port 8181
+    volumes:
+      - "./services/opa_config:/mnt"
+    environment:
+      - ISSUER=http://localhost:8081/realms/master
+    entrypoint: "sh /mnt/entrypoint.sh"
+    security_opt:
+      - label=disable
+    profiles:
+      - test
+
+  blueapi-oauth2-proxy:
+    network_mode: host # Port 4180
+    image: "quay.io/oauth2-proxy/oauth2-proxy:v7.13.0"
+    volumes:
+      - ./services/blueapi-oauth2-proxy/:/opt/config
+    command:
+      [
+        "--alpha-config=/opt/config/oauth2-alpha.yaml",
+        "--config=/opt/config/oauth2-proxy.cfg",
+      ]
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    security_opt:
+      - label=disable
+    profiles:
+      - test
