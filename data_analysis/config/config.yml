@@ -1,0 +1,11 @@
+authentication:
+  allow_anonymous_access: true
+trees:
+  - path: /
+    tree: catalog
+    args:
+      uri: sqlite:////tmp/catalog.db
+      readable_storage: ["/data"]
+      init_if_not_exists: true
+routers:
+  - hello:router

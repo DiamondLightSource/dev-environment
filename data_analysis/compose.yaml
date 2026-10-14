@@ -1,0 +1,17 @@
+services:
+  tiled:
+    image: ghcr.io/bluesky/tiled:0.2.18
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/deploy/config
+      - TILED_SINGLE_USER_API_KEY=secret
+    volumes:
+      - ./config:/deploy/config
+      - ./data:/data:ro
+    command: ["tiled", "serve", "config", "--host", "0.0.0.0", "--port", "8000", "/deploy/config/config.yml"]
+    post_start:
+      # Index files in /data into the catalog once the server is up.
+      - command: sh -c 'until tiled register http://localhost:8000 /data --api-key secret; do sleep 2; done'
+    security_opt:
+      - label=disable
