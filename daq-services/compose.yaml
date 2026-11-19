@@ -3,10 +3,11 @@ services:
     image: ghcr.io/diamondlightsource/numtracker:1.0.2
     network_mode: host # Port 8406
     environment:
-      - NUMTRACKER_AUTH_HOST=http://localhost:8181/
+      - NUMTRACKER_AUTH_HOST=http://localhost:8181
+      - NUMTRACKER_PORT=8406
+      - NUMTRACKER_LOG_LEVEL=info
       - NUMTRACKER_AUTH_ACCESS=v1/data/diamond/policy/numtracker/write_to_beamline_visit
       - NUMTRACKER_AUTH_ADMIN=v1/data/diamond/policy/admin/configure_beamline
-    command: ["serve","-v", "--port", "8406"]
     security_opt:
       - label=disable
     profiles:
@@ -35,10 +36,6 @@ services:
       - KC_BOOTSTRAP_ADMIN_USERNAME=admin
       - KC_HOSTNAME=http://localhost:8081
     command: ["start-dev"]
-    volumes:
-      - ./services/keycloak_config/:/tmp/config/
-    post_start:
-      - command: bash /tmp/config/startup.sh
     ports:
       - 8081:8080
     healthcheck:
@@ -52,14 +49,42 @@ services:
     profiles:
       - test
 
+  # One-shot: creates Keycloak users/clients and configures numtracker, then exits
+  configure-services:
+    image: ghcr.io/astral-sh/uv:python3.13-alpine
+    network_mode: host
+    volumes:
+      - ./services/startup.py:/startup.py:ro
+    environment:
+      - KEYCLOAK_SERVER=http://localhost:8081
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
+      - KC_BOOTSTRAP_ADMIN_USERNAME=admin
+      - KEYCLOAK_REALM=master
+      - NT_URL=http://localhost:8406/graphql
+    command: ["uv", "run", "/startup.py"]
+    # numtracker may not be listening yet on first try; the script is idempotent
+    restart: on-failure
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      numtracker:
+        condition: service_started
+      opa:
+        condition: service_started
+    security_opt:
+      - label=disable
+    profiles:
+      - test
+
   tiled:
-    image: ghcr.io/zohebshaikh/diamond-tiled:0.0.1
+    image: ghcr.io/diamondlightsource/dls-tiled:0.5.0
     network_mode: host # Port 8407
     environment:
-      - PYTHONPATH=/deploy/
+      - VITE_LOGIN_REDIRECT=false
       - POSTGRES_PASSWORD=tiled_pg
     volumes:
-      - ./services/tiled_config/config.yml:/deploy/config/config_for_containerfile.yml
+      - ./services/tiled_config:/deploy/config
+      - tiled-storage:/storage
     command: ["tiled", "serve", "config", "--host", "0.0.0.0", "--port", "8407"]
     depends_on:
       keycloak:
@@ -73,27 +98,29 @@ services:
 
   tiled-postgres:
     image: docker.io/postgres:16
-    network_mode: host
+    network_mode: host # Port 5432
     environment:
       - POSTGRES_USER=tiled
       - POSTGRES_PASSWORD=tiled_pg
-      # We create two databases, 'tiled_catalog' (metadata) and
-      # 'tiled_storage' (tabular data) below. But it is required to
-      # specify one here, so we use 'postgres' as a neutral default.
+      # initdb creates 'tiled_catalog' (metadata) and 'tiled_storage' (tabular
+      # data). One DB must be named here, so use 'postgres' as a neutral default.
       - POSTGRES_DB=postgres
     volumes:
-      - ./services/tiled_config/initdb:/docker-entrypoint-initdb.d
+      - ./services/tiled-postgres/initdb:/docker-entrypoint-initdb.d:ro
+      - tiled-postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: pg_isready -U tiled -d postgres
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
+    security_opt:
+      - label=disable
     profiles:
       - test
 
   opa:
-    image: openpolicyagent/opa:edge-static-debug
+    image: openpolicyagent/opa:1.21.2-static-debug # debug: entrypoint.sh needs a shell
     network_mode: host # Port 8181
     volumes:
       - "./services/opa_config:/mnt"
@@ -122,3 +149,26 @@ services:
       - label=disable
     profiles:
       - test
+
+  tiled-oauth2-proxy:
+    network_mode: host # Port 4181
+    image: "quay.io/oauth2-proxy/oauth2-proxy:v7.13.0"
+    volumes:
+      - ./services/tiled-oauth2-proxy/:/opt/config
+    command:
+      [
+        "--alpha-config=/opt/config/oauth2-alpha.yaml",
+        "--config=/opt/config/oauth2-proxy.cfg",
+      ]
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    security_opt:
+      - label=disable
+    profiles:
+      - test
+
+# Catalog DB and array files are persisted together; `docker compose down -v` resets both.
+volumes:
+  tiled-postgres-data:
+  tiled-storage:

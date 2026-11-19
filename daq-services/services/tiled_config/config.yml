@@ -5,22 +5,26 @@ authentication:
       args:
         audience: account
         client_id: tiled
-        client_secret: tiled-secret
         device_flow_client_id: tiled-cli
         well_known_uri: "http://localhost:8081/realms/master/.well-known/openid-configuration"
         confirmation_message: "You have logged in with authn.diamond.ac.uk as {id}."
-        redirect_on_success: "http://localhost:8407/ui/auth-callback"
-        user_id_claim: fedid
+        scopes_map:
+          read: ["read:metadata", "read:data"]
+          write: ["write:metadata", "write:data", "create:node", "register"]
 trees:
   - path: /
     tree: catalog
     args:
-      uri: postgresql://tiled:${POSTGRES_PASSWORD}@localhost:5432/tiled_catalog
-      writable_storage: ["file:///storage", "postgresql://tiled:${POSTGRES_PASSWORD}@localhost:5432/tiled_storage"]
+      # Catalog (metadata) and tabular data live in Postgres (see tiled-postgres service).
+      uri: "postgresql://tiled:${POSTGRES_PASSWORD}@localhost:5432/tiled_catalog"
+      writable_storage:
+        - "postgresql://tiled:${POSTGRES_PASSWORD}@localhost:5432/tiled_storage"
+        # Tiled can only store tables in SQL; arrays still need a file store.
+        - "file:///storage"
       init_if_not_exists: true
 
 access_control:
-  access_policy: "config.dls:DiamondOpenPolicyAgentAuthorizationPolicy"
+  access_policy: "dls_tiled.policy:DiamondOpenPolicyAgentAuthorizationPolicy"
   args:
     authorization_provider: "http://localhost:8181/v1/data/diamond/policy/"
     token_audience: account

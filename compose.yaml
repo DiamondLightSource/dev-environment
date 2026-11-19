@@ -1,3 +1,5 @@
 include:
-    - controls-services/compose.yaml
+    - path:
+        - controls-services/compose.yaml
+        - controls-services-override.yaml
     - daq-services/compose.yaml
