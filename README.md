@@ -32,14 +32,19 @@ Key services include:
 - `numtracker`: a service for tracking beamline visit-related metadata.
 - `rabbitmq`: a RabbitMQ message broker with management and messaging endpoints.
 - `keycloak`: an authentication server used for identity and access management.
+- `configure-services`: a one-shot container that runs `services/startup.py` to create Keycloak users and clients and configure numtracker, then exits.
 - `tiled`: a data access service for serving scientific data.
-- `tiled-postgres`: the PostgreSQL backing store for Tiled metadata and data.
+- `tiled-postgres`: the PostgreSQL store for the Tiled catalog (`tiled_catalog`) and tabular data (`tiled_storage`). Arrays are written to file storage. Both are kept in named volumes; `docker compose down -v` resets them.
 - `opa`: Open Policy Agent for policy-based access control.
-- `blueapi-oauth2-proxy`: an OAuth2 proxy used to front the BlueAPI-related services.
+- `blueapi-oauth2-proxy`: an OAuth2 proxy in front of BlueAPI (port 4180).
+- `tiled-oauth2-proxy`: an OAuth2 proxy in front of Tiled (port 4181).
+
+The DAQ configuration follows the system tests in [blueapi](https://github.com/DiamondLightSource/blueapi/tree/main/tests/system_tests). All services use the `test` profile, so start them with `docker compose --profile test up -d`.
 
 ## Repository layout
 
-- `controls-services/` - EPICS and beamline control services.
+- `controls-services/` - EPICS and beamline control services (git submodule of [example-services](https://github.com/epics-containers/example-services); run `git submodule update --init`).
+- `controls-services-override.yaml` - local overrides for the submodule (caps the `ca-gateway` open-file limit).
 - `daq-services/` - DAQ, messaging, auth, policy, and data access services.
 
 This repository is meant to serve as a collection of Compose-based deployment definitions for Diamond-style environments.
